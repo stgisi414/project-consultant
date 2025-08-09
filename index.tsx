@@ -60,6 +60,30 @@ interface ChatMessage {
 }
 
 // --- AI Schemas ---
+// NEW: Schema for generating a single field suggestion
+const suggestionSchema = {
+    type: Type.OBJECT,
+    properties: {
+        suggestion: {
+            type: Type.STRING,
+            description: "A creative and relevant suggestion for the specified field."
+        }
+    },
+    required: ['suggestion']
+};
+
+// NEW: Schema for generating all project creation fields at once
+const fullProjectIdeaSchema = {
+    type: Type.OBJECT,
+    properties: {
+        projectName: { type: Type.STRING },
+        projectType: { type: Type.STRING },
+        projectGoals: { type: Type.ARRAY, items: { type: Type.STRING } }
+    },
+    required: ['projectName', 'projectType', 'projectGoals']
+};
+
+
 const projectCreationSchema = {
   type: Type.OBJECT,
   properties: {
@@ -269,6 +293,11 @@ const styles = {
         width: 'clamp(300px, 90%, 500px)',
         boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
     },
+    // NEW: Style for the input and wand button container
+    inputContainer: {
+        position: 'relative',
+        width: '100%',
+    },
     input: {
         width: '100%',
         padding: '12px',
@@ -277,6 +306,18 @@ const styles = {
         borderRadius: '8px',
         color: 'var(--text-color)',
         fontSize: '16px',
+    },
+    // NEW: Style for the "wand" icon button
+    wandButton: {
+        position: 'absolute',
+        right: '10px',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        background: 'none',
+        border: 'none',
+        color: 'var(--secondary-color)',
+        cursor: 'pointer',
+        fontSize: '20px'
     },
     button: {
         padding: '12px 20px',
@@ -518,10 +559,77 @@ const ConsultancyScreen = ({ project, chatHistory, onSendMessage, onTaskStatusCh
     </div>
 );
 
-const ProjectCreationScreen = ({ onCreateProject, isLoading }: { onCreateProject: (name: string, type: string, goals: string) => void; isLoading: boolean; }) => {
+// --- MODIFIED ProjectCreationScreen Component ---
+const ProjectCreationScreen = ({ onCreateProject, isLoading, setIsLoading }: { onCreateProject: (name: string, type: string, goals: string) => void; isLoading: boolean; setIsLoading: (loading: boolean) => void; }) => {
     const [projectName, setProjectName] = useState('');
     const [projectType, setProjectType] = useState('');
     const [projectGoals, setProjectGoals] = useState('');
+
+    // NEW: Generic function to handle single field generation
+    const handleGenerateField = async (fieldName: 'projectName' | 'projectType' | 'projectGoals') => {
+        setIsLoading(true);
+        let prompt = '';
+        switch(fieldName) {
+            case 'projectName':
+                prompt = `Generate a creative and catchy name for a project. The project type is "${projectType || 'not specified'}" and the goals are "${projectGoals || 'not specified'}".`;
+                break;
+            case 'projectType':
+                prompt = `Suggest a project type for a project named "${projectName || 'unnamed project'}" with the goals: "${projectGoals || 'not specified'}".`;
+                break;
+            case 'projectGoals':
+                 prompt = `Based on the project name "${projectName || 'unnamed project'}" and type "${projectType || 'not specified'}", suggest a comma-separated list of 2-3 main goals.`;
+                break;
+        }
+
+        try {
+            const response = await ai.models.generateContent({
+                model: 'gemini-1.5-flash',
+                contents: prompt,
+                config: { responseMimeType: "application/json", responseSchema: suggestionSchema },
+            });
+            const result = JSON.parse(response.text);
+
+            switch(fieldName) {
+                case 'projectName':
+                    setProjectName(result.suggestion);
+                    break;
+                case 'projectType':
+                    setProjectType(result.suggestion);
+                    break;
+                case 'projectGoals':
+                    setProjectGoals(result.suggestion);
+                    break;
+            }
+        } catch (error) {
+            console.error(`Error generating ${fieldName}:`, error);
+            alert(`Failed to generate suggestion for ${fieldName}.`);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    // NEW: Function to generate all fields at once
+    const handleGenerateAll = async () => {
+        setIsLoading(true);
+        const prompt = "Generate a complete, creative idea for a new software project, including a name, type, and a few goals.";
+        try {
+            const response = await ai.models.generateContent({
+                model: 'gemini-1.5-flash',
+                contents: prompt,
+                config: { responseMimeType: "application/json", responseSchema: fullProjectIdeaSchema },
+            });
+            const result = JSON.parse(response.text);
+            setProjectName(result.projectName);
+            setProjectType(result.projectType);
+            setProjectGoals(result.projectGoals.join(', '));
+        } catch (error) {
+            console.error("Error generating full project idea:", error);
+            alert("Failed to generate a full project idea.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
@@ -532,31 +640,49 @@ const ProjectCreationScreen = ({ onCreateProject, isLoading }: { onCreateProject
 
     return (
         <form onSubmit={handleSubmit} style={styles.creationScreen as React.CSSProperties}>
-            <h1 style={{textAlign: 'center', margin: 0}}>Create Your Project</h1>
+            <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
+                <h1 style={{textAlign: 'center', margin: 0}}>Create Your Project</h1>
+                {/* NEW: Button to fill all fields */}
+                <button type="button" onClick={handleGenerateAll} disabled={isLoading} style={{...styles.suggestedButton, borderColor: 'var(--primary-color)', color: 'var(--primary-color)'}}>
+                    ✨ Generate All
+                </button>
+            </div>
             <p style={{textAlign: 'center', margin: 0, color: 'var(--text-secondary-color)'}}>Let's get your new project set up with the AI assistant.</p>
-            <input
-                type="text"
-                value={projectName}
-                onChange={(e) => setProjectName(e.target.value)}
-                placeholder="Project Name (e.g., 'My Awesome App')"
-                style={styles.input as React.CSSProperties}
-                required
-            />
-            <input
-                type="text"
-                value={projectType}
-                onChange={(e) => setProjectType(e.target.value)}
-                placeholder="Project Type (e.g., 'Web App')"
-                style={styles.input as React.CSSProperties}
-                required
-            />
-            <textarea
-                value={projectGoals}
-                onChange={(e) => setProjectGoals(e.target.value)}
-                placeholder="Main Goals (comma-separated, e.g., 'User auth, dashboard, payments')"
-                style={{ ...styles.input as React.CSSProperties, height: '100px', resize: 'vertical' }}
-                required
-            />
+            {/* NEW: Input with Wand Button */}
+            <div style={styles.inputContainer as React.CSSProperties}>
+                <input
+                    type="text"
+                    value={projectName}
+                    onChange={(e) => setProjectName(e.target.value)}
+                    placeholder="Project Name (e.g., 'My Awesome App')"
+                    style={styles.input as React.CSSProperties}
+                    required
+                />
+                <button type="button" style={styles.wandButton as React.CSSProperties} onClick={() => handleGenerateField('projectName')} disabled={isLoading}>✨</button>
+            </div>
+             {/* NEW: Input with Wand Button */}
+            <div style={styles.inputContainer as React.CSSProperties}>
+                <input
+                    type="text"
+                    value={projectType}
+                    onChange={(e) => setProjectType(e.target.value)}
+                    placeholder="Project Type (e.g., 'Web App')"
+                    style={styles.input as React.CSSProperties}
+                    required
+                />
+                <button type="button" style={styles.wandButton as React.CSSProperties} onClick={() => handleGenerateField('projectType')} disabled={isLoading}>✨</button>
+            </div>
+            {/* NEW: Input with Wand Button */}
+             <div style={styles.inputContainer as React.CSSProperties}>
+                <textarea
+                    value={projectGoals}
+                    onChange={(e) => setProjectGoals(e.target.value)}
+                    placeholder="Main Goals (comma-separated, e.g., 'User auth, dashboard, payments')"
+                    style={{ ...styles.input as React.CSSProperties, height: '100px', resize: 'vertical' }}
+                    required
+                />
+                <button type="button" style={styles.wandButton as React.CSSProperties} onClick={() => handleGenerateField('projectGoals')} disabled={isLoading}>✨</button>
+            </div>
             <button type="submit" disabled={isLoading} style={styles.button as React.CSSProperties}>
                 {isLoading ? 'Generating Project...' : 'Create Project'}
             </button>
@@ -821,7 +947,12 @@ const App = () => {
                         onReadAloud={readAloud}
                     />
                 ) : (
-                    <ProjectCreationScreen onCreateProject={handleCreateProject} isLoading={isLoading} />
+                    <ProjectCreationScreen 
+                        onCreateProject={handleCreateProject} 
+                        isLoading={isLoading}
+                        // NEW: Pass setIsLoading to the creation screen
+                        setIsLoading={setIsLoading} 
+                    />
                 )}
             </div>
         </>
