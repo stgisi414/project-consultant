@@ -39,7 +39,7 @@ interface Project {
   projectGoals: string[];
   tasks: Task[];
   progress: number;
-  priorities: { 
+  priorities: {
     speed: number;
     scope: number;
   };
@@ -84,13 +84,13 @@ const projectCreationSchema = {
       },
       required: ['projectName', 'projectType', 'projectGoals', 'initialTasks']
     },
-    openingStatement: { 
-        type: Type.STRING, 
+    openingStatement: {
+        type: Type.STRING,
         description: "A welcoming message for the user that confirms the project has been created and suggests a first step."
     },
-    suggestedActions: { 
-        type: Type.ARRAY, 
-        items: { type: Type.STRING }, 
+    suggestedActions: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING },
         description: "An array of 2-3 initial actions or questions that the user can take."
     }
   },
@@ -150,6 +150,75 @@ const nextStepSchema = {
 
 // --- Helper Functions ---
 const generateId = () => `id_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+/**
+ * Decodes a base64 string into an ArrayBuffer.
+ * @param base64 The base64 string to decode.
+ * @returns An ArrayBuffer containing the decoded data.
+ */
+function base64ToArrayBuffer(base64: string): ArrayBuffer {
+    const binaryString = window.atob(base64);
+    const len = binaryString.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
+/**
+ * Converts raw PCM audio data into a WAV file Blob.
+ * @param pcmData The raw PCM data.
+ * @param sampleRate The sample rate of the audio.
+ * @param channels The number of audio channels.
+ * @param bitDepth The bit depth of the audio.
+ * @returns A Blob representing the WAV file.
+ */
+function pcmToWav(pcmData: ArrayBuffer, sampleRate: number, channels: number, bitDepth: number): Blob {
+    const pcmLength = pcmData.byteLength;
+    const wavHeaderLength = 44;
+    const totalLength = wavHeaderLength + pcmLength;
+
+    const buffer = new ArrayBuffer(totalLength);
+    const view = new DataView(buffer);
+
+    // RIFF identifier
+    view.setUint32(0, 0x52494646, false); // "RIFF"
+    // file length
+    view.setUint32(4, totalLength - 8, true);
+    // RIFF type
+    view.setUint32(8, 0x57415645, false); // "WAVE"
+
+    // format chunk identifier
+    view.setUint32(12, 0x666d7420, false); // "fmt "
+    // format chunk length
+    view.setUint32(16, 16, true);
+    // sample format (1 for PCM)
+    view.setUint16(20, 1, true);
+    // channel count
+    view.setUint16(22, channels, true);
+    // sample rate
+    view.setUint32(24, sampleRate, true);
+    // byte rate (sample rate * block align)
+    view.setUint32(28, sampleRate * channels * (bitDepth / 8), true);
+    // block align (channels * bytes per sample)
+    view.setUint16(32, channels * (bitDepth / 8), true);
+    // bits per sample
+    view.setUint16(34, bitDepth, true);
+
+    // data chunk identifier
+    view.setUint32(36, 0x64617461, false); // "data"
+    // data chunk length
+    view.setUint32(40, pcmLength, true);
+
+    // Write PCM data
+    const pcmBytes = new Uint8Array(pcmData);
+    const wavBytes = new Uint8Array(buffer);
+    wavBytes.set(pcmBytes, wavHeaderLength);
+
+    return new Blob([wavBytes], { type: 'audio/wav' });
+}
+
 
 // --- STYLES ---
 const styles = {
@@ -280,6 +349,13 @@ const styles = {
       fontSize: '14px',
       cursor: 'pointer',
       transition: 'background-color 0.2s',
+    },
+    readAloudButton: {
+        marginLeft: '10px',
+        background: 'none',
+        border: 'none',
+        color: 'var(--secondary-color)',
+        cursor: 'pointer',
     }
 };
 
@@ -312,7 +388,7 @@ const TaskItem: React.FC<TaskItemProps> = ({ task, onStatusChange }) => {
             </div>
             <p style={{ margin: '5px 0 0', fontSize: '14px', color: 'var(--text-secondary-color)' }}>{task.description}</p>
              {task.status !== 'Completed' && (
-                <button 
+                <button
                     onClick={() => onStatusChange(task.id, 'Completed')}
                     style={{ marginTop: '10px', padding: '5px 10px', fontSize: '12px', cursor: 'pointer', backgroundColor: '#333', border: '1px solid var(--border-color)', color: 'var(--text-color)', borderRadius: '5px'}}
                 >
@@ -330,7 +406,7 @@ const ProjectPane = ({ project, onTaskStatusChange, onReset }: { project: Projec
           <button onClick={onReset} style={{...styles.button, backgroundColor: 'var(--error-color)', fontSize: '12px', padding: '8px 12px'}}>Reset</button>
         </div>
         <p style={{ marginTop: 0, color: 'var(--text-secondary-color)' }}>{project.projectType}</p>
-        
+
         <div>
             <label>Progress: {project.progress}%</label>
             <div style={{ width: '100%', backgroundColor: '#333', borderRadius: '5px', overflow: 'hidden', height: '10px', marginTop: '5px' }}>
@@ -356,7 +432,7 @@ const ProjectPane = ({ project, onTaskStatusChange, onReset }: { project: Projec
     </div>
 );
 
-const ConsultancyLog = ({ chatHistory }: { chatHistory: ChatMessage[] }) => {
+const ConsultancyLog = ({ chatHistory, onReadAloud }: { chatHistory: ChatMessage[], onReadAloud: (text: string) => void }) => {
     const logEndRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
         logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -371,6 +447,11 @@ const ConsultancyLog = ({ chatHistory }: { chatHistory: ChatMessage[] }) => {
                     backgroundColor: msg.sender === 'user' ? 'var(--primary-color)' : 'var(--surface-color)',
                 }}>
                     {msg.text}
+                    {msg.sender === 'ai' && (
+                        <button style={styles.readAloudButton as React.CSSProperties} onClick={() => onReadAloud(msg.text)}>
+                            🔊
+                        </button>
+                    )}
                 </div>
             ))}
             <div ref={logEndRef} />
@@ -423,17 +504,17 @@ const ActionPanel = ({ onSendMessage, isLoading, suggestedActions }: { onSendMes
     );
 };
 
-const ChatPane = ({ chatHistory, onSendMessage, isLoading, suggestedActions }: { chatHistory: ChatMessage[]; onSendMessage: (message: string) => void; isLoading: boolean; suggestedActions: string[] }) => (
+const ChatPane = ({ chatHistory, onSendMessage, isLoading, suggestedActions, onReadAloud }: { chatHistory: ChatMessage[]; onSendMessage: (message: string) => void; isLoading: boolean; suggestedActions: string[], onReadAloud: (text: string) => void }) => (
     <div style={styles.chatPane as React.CSSProperties}>
-        <ConsultancyLog chatHistory={chatHistory} />
+        <ConsultancyLog chatHistory={chatHistory} onReadAloud={onReadAloud} />
         <ActionPanel onSendMessage={onSendMessage} isLoading={isLoading} suggestedActions={suggestedActions} />
     </div>
 );
 
-const ConsultancyScreen = ({ project, chatHistory, onSendMessage, onTaskStatusChange, isLoading, onReset }: { project: Project; chatHistory: ChatMessage[]; onSendMessage: (message: string) => void; onTaskStatusChange: (taskId: string, status: Task['status']) => void; isLoading: boolean; onReset: () => void }) => (
+const ConsultancyScreen = ({ project, chatHistory, onSendMessage, onTaskStatusChange, isLoading, onReset, onReadAloud }: { project: Project; chatHistory: ChatMessage[]; onSendMessage: (message: string) => void; onTaskStatusChange: (taskId: string, status: Task['status']) => void; isLoading: boolean; onReset: () => void; onReadAloud: (text: string) => void }) => (
     <div style={styles.consultancyScreen as React.CSSProperties}>
         <ProjectPane project={project} onTaskStatusChange={onTaskStatusChange} onReset={onReset} />
-        <ChatPane chatHistory={chatHistory} onSendMessage={onSendMessage} isLoading={isLoading} suggestedActions={project.suggestedActions} />
+        <ChatPane chatHistory={chatHistory} onSendMessage={onSendMessage} isLoading={isLoading} suggestedActions={project.suggestedActions} onReadAloud={onReadAloud}/>
     </div>
 );
 
@@ -487,6 +568,8 @@ const App = () => {
     const [project, setProject] = useState<Project | null>(null);
     const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [audio, setAudio] = useState<HTMLAudioElement | null>(null);
+
 
     useEffect(() => {
         try {
@@ -511,7 +594,7 @@ const App = () => {
             localStorage.removeItem('project');
         }
     }, [project]);
-    
+
     useEffect(() => {
         if (chatHistory.length > 0) {
             localStorage.setItem('chatHistory', JSON.stringify(chatHistory));
@@ -520,12 +603,52 @@ const App = () => {
         }
     }, [chatHistory]);
 
+    const readAloud = async (text: string) => {
+        if (isLoading) return;
+        setIsLoading(true);
+        try {
+            const response = await ai.models.generateContent({
+                model: "gemini-2.5-flash-preview-tts",
+                contents: [{ parts: [{ text: `Say cheerfully: ${text}` }] }],
+                config: {
+                    responseModalities: ["AUDIO"],
+                    speechConfig: {
+                        voiceConfig: {
+                            prebuiltVoiceConfig: { voiceName: "Kore" },
+                        },
+                    },
+                },
+            });
+
+            const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+            if (audioData?.data) {
+                // The API returns raw signed 16-bit PCM audio.
+                // We need to wrap it in a WAV container for browser playback.
+                const pcmData = base64ToArrayBuffer(audioData.data);
+                const sampleRate = 24000; // The TTS model outputs at 24kHz
+                const wavBlob = pcmToWav(pcmData, sampleRate, 1, 16);
+                const audioUrl = URL.createObjectURL(wavBlob);
+                const newAudio = new Audio(audioUrl);
+                newAudio.play();
+                setAudio(newAudio);
+            } else {
+                throw new Error("Audio data not found in response.");
+            }
+        } catch (error) {
+            console.error('Error with text-to-speech:', error);
+            alert("Sorry, I couldn't read that aloud.");
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+
     const handleCreateProject = async (name: string, type: string, goals: string) => {
         setIsLoading(true);
         try {
             const prompt = `Create a new project. Name: "${name}", Type: "${type}", Goals: "${goals}". Generate initial tasks, a welcoming statement, and suggested actions.`;
             const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
+                model: 'gemini-1.5-flash',
                 contents: prompt,
                 config: { responseMimeType: "application/json", responseSchema: projectCreationSchema },
             });
@@ -545,7 +668,7 @@ const App = () => {
                 resources: [],
                 suggestedActions: result.suggestedActions,
             };
-            
+
             const openingMessage: ChatMessage = {
                 sender: 'ai',
                 text: result.openingStatement,
@@ -554,6 +677,7 @@ const App = () => {
 
             setProject(newProject);
             setChatHistory([openingMessage]);
+            await readAloud(result.openingStatement);
         } catch (error) {
             console.error("Error creating project:", error);
             alert("Failed to create project. Please check the console for details.");
@@ -563,7 +687,7 @@ const App = () => {
 
     const handleSendMessage = async (message: string) => {
         if (!project) return;
-        
+
         const userMessage: ChatMessage = {
             sender: 'user',
             text: message,
@@ -575,9 +699,8 @@ const App = () => {
 
         try {
             const prompt = `User message: "${message}". Current project state: ${JSON.stringify(project)}. Recent conversation: ${JSON.stringify(chatHistory.slice(-4))}. Analyze the user's message and provide a consultancy update according to the schema.`;
-            
             const response = await ai.models.generateContent({
-                model: 'gemini-2.5-flash',
+                model: 'gemini-1.5-flash',
                 contents: prompt,
                 config: { responseMimeType: "application/json", responseSchema: nextStepSchema },
             });
@@ -586,12 +709,12 @@ const App = () => {
 
             setProject(prevProject => {
                 if (!prevProject) return null;
-                
+
                 let newTasks = [...prevProject.tasks];
                 if (update.taskUpdates) {
                     update.taskUpdates.forEach((taskUpdate: any) => {
                         const existingTaskIndex = newTasks.findIndex(t => t.id === taskUpdate.taskId || t.name === taskUpdate.name);
-                        
+
                         if (taskUpdate.action === 'add') {
                             if (existingTaskIndex === -1) {
                                 newTasks.push({
@@ -618,7 +741,7 @@ const App = () => {
                 }
 
                 const newProgress = Math.max(0, Math.min(100, prevProject.progress + (update.progressUpdate || 0)));
-                
+
                 let newBlockers = [...prevProject.blockers];
                 if(update.blockers) {
                     update.blockers.forEach((b: any) => {
@@ -649,6 +772,7 @@ const App = () => {
                 timestamp: new Date().toISOString(),
             };
             setChatHistory(prev => [...prev, aiMessage]);
+            await readAloud(update.responseText);
 
         } catch (error) {
             console.error("Error sending message:", error);
@@ -662,7 +786,7 @@ const App = () => {
             setIsLoading(false);
         }
     };
-    
+
     const handleTaskStatusChange = (taskId: string, status: Task['status']) => {
         const task = project?.tasks.find(t => t.id === taskId);
         if(task && status === 'Completed') {
@@ -675,6 +799,10 @@ const App = () => {
             localStorage.clear();
             setProject(null);
             setChatHistory([]);
+            if (audio) {
+                audio.pause();
+                setAudio(null);
+            }
         }
     }
 
@@ -690,6 +818,7 @@ const App = () => {
                         onTaskStatusChange={handleTaskStatusChange}
                         isLoading={isLoading}
                         onReset={handleReset}
+                        onReadAloud={readAloud}
                     />
                 ) : (
                     <ProjectCreationScreen onCreateProject={handleCreateProject} isLoading={isLoading} />
